@@ -62,7 +62,7 @@ build.bat
 ## Run
 
 ```
-perf-run.exe [--warmup N] [--n N] [--settle MS]
+perf-run.exe [--warmup N] [--n N] [--settle MS] [--presentmon PATH]
 ```
 
 | flag | default | meaning |
@@ -70,8 +70,48 @@ perf-run.exe [--warmup N] [--n N] [--settle MS]
 | `--warmup` | 5 | discard first N iterations (lets shell32 warm up) |
 | `--n` | 200 | measured iterations |
 | `--settle` | 50 | ms to pause between iterations |
+| `--presentmon PATH` | off | also report first-DWM-present time (see below) |
 
 For a cold-cache measurement, use `--warmup 0` immediately after a fresh boot.
+
+### Optional: closer-to-pixels measurement via PresentMon
+
+`--presentmon` adds a second metric: the time from `CreateProcess` to the
+first DWM compositor present at or after `EVENT_OBJECT_SHOW`. This is the
+closest available proxy for "first frame containing the dialog hits the
+screen" — much closer to user-perceived latency than `ShowWindow` alone.
+
+How it works:
+
+1. perf-run spawns [PresentMon](https://github.com/GameTechDev/PresentMon)
+   in parallel with an ETW session that records every present from
+   `dwm.exe` (the classic Run dialog is GDI, so the *compositor* presents
+   the frames containing it — not rundll32).
+2. After the run, perf-run sends `CTRL_BREAK` to PresentMon to flush the
+   CSV, then parses it. PresentMon's `--qpc_time` column gives absolute
+   QPC ticks, directly comparable to `QueryPerformanceCounter` values
+   recorded in-process.
+3. For each iteration, the first DWM present with `QPC >= t_show` is
+   attributed as that iteration's "first frame on screen."
+
+PresentMon discovery: `--presentmon PATH` (explicit), then `PRESENTMON`
+env var, then PATH search for `PresentMon.exe` and common scoop-named
+variants. Tested against PresentMon 2.4.1.
+
+**ETW requires elevation.** Either run perf-run from an elevated shell,
+or add yourself one-time to the `Performance Log Users` group:
+
+```
+net localgroup "Performance Log Users" %USERNAME% /add
+```
+
+then sign out and back in.
+
+The "first DWM present" metric is *still* a proxy — DWM presents include
+many surfaces, and PresentMon doesn't tag presents with their constituent
+HWNDs. The first DWM present after `t_show` is the earliest frame that
+*could* include our dialog; in practice it's bounded by one composition
+frame (~16 ms at 60 Hz vsync) above the true value.
 
 ## What this is *not*
 
