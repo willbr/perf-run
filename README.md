@@ -1,5 +1,9 @@
 # perf-run
 
+> **Disclaimer:** this repo is AI slop. It was written end-to-end by Claude
+> (Opus 4.7) in a single session. The code works and the numbers are real,
+> but it has not been carefully reviewed by a human. Trust accordingly.
+
 Measures time-to-show of the classic Windows Run dialog.
 
 ## Why
