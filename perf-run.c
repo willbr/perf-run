@@ -335,29 +335,48 @@ static int correlate_presents(const char *csv_path, Sample *samples, int n_sampl
         return 0;
     }
 
+    /* Skip UTF-8 BOM that PresentMon 2.x writes at the start of CSVs. */
+    char *header_line = line;
+    if ((unsigned char)header_line[0] == 0xEF &&
+        (unsigned char)header_line[1] == 0xBB &&
+        (unsigned char)header_line[2] == 0xBF) {
+        header_line += 3;
+    }
+
     enum { MAX_COLS = 64 };
     char *header[MAX_COLS];
-    int    n_cols = split_csv_inplace(line, header, MAX_COLS);
+    int    n_cols = split_csv_inplace(header_line, header, MAX_COLS);
 
     int col_app  = find_col(header, n_cols, "Application");
     if (col_app < 0) col_app = find_col(header, n_cols, "ProcessName");
 
-    int col_qpc  = find_col(header, n_cols, "QPCTime");
-    if (col_qpc < 0) col_qpc = find_col(header, n_cols, "CPUStartQpc");
-    if (col_qpc < 0) col_qpc = find_col(header, n_cols, "CpuStartQpc");
+    /* Prefer the present-time QPC over the CPU-start QPC -- the present
+     * is closer to when the compositor actually submitted the frame. */
+    int col_qpc  = find_col(header, n_cols, "TimeInQPC");      /* PM 2.x v2 */
+    if (col_qpc < 0) col_qpc = find_col(header, n_cols, "QPCTime");      /* PM 1.x */
+    if (col_qpc < 0) col_qpc = find_col(header, n_cols, "CPUStartQPC");  /* fallback */
+
+    /* Optional: MsUntilDisplayed lets us add display-latency for true
+     * pixels-on-screen timing. -1 if not present (older PresentMon). */
+    int col_disp = find_col(header, n_cols, "MsUntilDisplayed");
 
     if (col_qpc < 0 || col_app < 0) {
         fprintf(stderr,
                 "PresentMon CSV missing required columns "
-                "(need Application/ProcessName and QPCTime/CPUStartQpc)\n");
+                "(need Application/ProcessName and TimeInQPC/QPCTime)\n");
         fclose(f);
         return 0;
     }
 
     /* Single forward pass: rows are emitted in increasing QPC order, so
-     * for each sample we just look for the first row with QPC >= t_show. */
+     * for each sample we just look for the first row with QPC >= t_show.
+     * Samples are in spawn order, so we advance a "next unmatched" cursor
+     * to keep the inner loop O(1) amortized. */
     int matched = 0;
     int rows    = 0;
+    int cursor  = 0;
+
+    double qpc_per_ms = (double)g_qpc_freq.QuadPart / 1000.0;
 
     while (fgets(line, sizeof(line), f)) {
         char *fields[MAX_COLS];
@@ -370,14 +389,31 @@ static int correlate_presents(const char *csv_path, Sample *samples, int n_sampl
         LONGLONG qpc = _atoi64(fields[col_qpc]);
         if (qpc <= 0) continue;
 
-        for (int i = 0; i < n_samples; i++) {
-            if (!samples[i].shown || samples[i].presented) continue;
-            if (qpc >= samples[i].t_show.QuadPart) {
-                samples[i].t_present.QuadPart = qpc;
-                samples[i].presented          = TRUE;
-                matched++;
-                break;  /* a single CSV row attributes to at most one sample */
+        /* Optionally add display latency to get pixels-on-screen QPC. */
+        if (col_disp >= 0 && nf > col_disp) {
+            const char *d = fields[col_disp];
+            /* "NA" or non-numeric: leave qpc as the present time. */
+            if (d[0] && d[0] != 'N') {
+                double ms = atof(d);
+                if (ms > 0.0) {
+                    qpc += (LONGLONG)(ms * qpc_per_ms);
+                }
             }
+        }
+
+        /* Advance cursor past samples that are already matched or
+         * weren't shown. */
+        while (cursor < n_samples &&
+               (!samples[cursor].shown || samples[cursor].presented)) {
+            cursor++;
+        }
+        if (cursor >= n_samples) break;
+
+        if (qpc >= samples[cursor].t_show.QuadPart) {
+            samples[cursor].t_present.QuadPart = qpc;
+            samples[cursor].presented          = TRUE;
+            matched++;
+            cursor++;
         }
     }
 
@@ -632,7 +668,7 @@ int main(int argc, char **argv)
 
     report_metric("CreateProcess -> EVENT_OBJECT_SHOW", show_ms, n_show);
     if (use_presentmon) {
-        report_metric("CreateProcess -> first DWM present (>= show)",
+        report_metric("CreateProcess -> first DWM frame on screen (present + display latency)",
                       present_ms, n_present);
         if (n_present == 0) {
             fprintf(stderr,

@@ -28,15 +28,32 @@ so the rewrite has a baseline to be embarrassed by.
 (`rundll32.exe shell32.dll,#61`):
 
 ```
-  min  :   40.23 ms
-  p50  :   48.53 ms
-  p90  :   50.34 ms
-  p99  :   52.58 ms
-  max  :   54.03 ms
-  mean :   48.15 ms
+=== CreateProcess -> EVENT_OBJECT_SHOW (n=200) ===
+  min  :   47.23 ms
+  p50  :   48.66 ms
+  p90  :   49.85 ms
+  p99  :   51.09 ms
+  max  :   51.41 ms
+  mean :   48.74 ms
+
+=== CreateProcess -> first DWM frame on screen (present + display latency) (n=200) ===
+  min  :   57.23 ms
+  p50  :   61.53 ms
+  p90  :   64.48 ms
+  p99  :   65.83 ms
+  max  :   66.22 ms
+  mean :   61.77 ms
 ```
 
-**~48 ms p50** — about half the 94 ms quoted for the rewrite.
+**62 ms p50 first-pixel-on-screen vs Microsoft's quoted 94 ms** for the
+rewrite — now an apples-to-apples comparison (both are time-to-displayed,
+captured via PresentMon's ETW present timeline plus `MsUntilDisplayed`).
+The classic dialog is ~32 ms (~2 composition frames) faster despite being
+the dialog the rewrite was supposed to improve on.
+
+The 13 ms gap between the two perf-run metrics is one DWM composition
+cycle (16.67 ms at 60 Hz vsync) plus a fraction — the previously-hidden
+compositor + scanout latency that `EVENT_OBJECT_SHOW` alone doesn't see.
 
 ## What it measures
 
@@ -115,20 +132,17 @@ frame (~16 ms at 60 Hz vsync) above the true value.
 
 ## What this is *not*
 
-The 48 ms vs 94 ms comparison is suggestive, not apples-to-apples. Be
-honest about what's different:
+The 62 ms first-pixel number is a much fairer comparison than the
+`ShowWindow`-only metric, but a few caveats remain:
 
-- **Different metric.** This tool measures `CreateProcess` →
-  `EVENT_OBJECT_SHOW` (the `ShowWindow` call). Microsoft's "time-to-show"
-  almost certainly means *user-perceived* latency: keystroke (Win+R) →
-  first frame on screen. That includes hotkey dispatch through explorer,
-  whatever logic explorer uses to decide what to launch, and DWM
-  compositor latency to first present. None of that is measured here.
-  `EVENT_OBJECT_SHOW` itself precedes first paint by ~one frame (~16 ms
-  at 60 Hz).
+- **Different starting point.** Microsoft's "time-to-show" presumably
+  starts from the Win+R keystroke. perf-run starts from `CreateProcess`,
+  skipping hotkey dispatch through explorer and whatever logic explorer
+  uses to decide what to launch. That's almost certainly < 5 ms of extra
+  overhead, but it's not zero.
 - **Different process model.** The new dialog likely isn't spawning
   rundll32 at all — it may be in-process to explorer, or activated as a
-  packaged app via a different path with very different startup costs.
+  packaged app via a different path. perf-run measures the rundll32 path.
 - **Steady-state, warm shell.** A 5-iteration warmup leaves shell32,
   comctl32, the rundll32 image, and kernel page cache hot. Microsoft's
   number may include cases this harness doesn't see (cold start, low-mem
@@ -136,10 +150,11 @@ honest about what's different:
 - **Uncontrolled environment.** No CPU frequency pin, no process priority
   bump, no CPU affinity, no AV exclusion. On a thermally throttled or
   battery-powered laptop these dominate.
-
-The honest framing: *the classic dialog reaches `ShowWindow` in ~48 ms
-from `CreateProcess`, on a warm shell, on this machine.* Still a damning
-data point against 94 ms — but not the same metric.
+- **First-DWM-present-after-show is a proxy.** PresentMon doesn't tag
+  presents with their constituent HWNDs. The first DWM present whose QPC
+  is at or after `EVENT_OBJECT_SHOW` is the earliest frame that *could*
+  include the dialog; in practice it's bounded above by one composition
+  frame from the true value.
 
 ## Caveats
 
