@@ -45,6 +45,7 @@ static void CALLBACK win_event_proc(HWINEVENTHOOK hook, DWORD event, HWND hwnd,
     if (idObject != OBJID_WINDOW)   return;
     if (g_iter.shown)               return;
     if (!hwnd)                      return;
+    if (g_iter.target_pid == 0)     return;  /* between iterations */
 
     DWORD pid = 0;
     GetWindowThreadProcessId(hwnd, &pid);
@@ -202,8 +203,8 @@ int main(int argc, char **argv)
         }
         g_iter.target_pid = pi.dwProcessId;
 
-        DWORD deadline = GetTickCount() + (DWORD)per_iter_to;
-        while (!g_iter.shown && GetTickCount() < deadline) {
+        ULONGLONG deadline = GetTickCount64() + (ULONGLONG)per_iter_to;
+        while (!g_iter.shown && GetTickCount64() < deadline) {
             MSG msg;
             while (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE)) {
                 TranslateMessage(&msg);

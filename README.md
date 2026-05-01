@@ -73,10 +73,38 @@ perf-run.exe [--warmup N] [--n N] [--settle MS]
 
 For a cold-cache measurement, use `--warmup 0` immediately after a fresh boot.
 
+## What this is *not*
+
+The 48 ms vs 94 ms comparison is suggestive, not apples-to-apples. Be
+honest about what's different:
+
+- **Different metric.** This tool measures `CreateProcess` →
+  `EVENT_OBJECT_SHOW` (the `ShowWindow` call). Microsoft's "time-to-show"
+  almost certainly means *user-perceived* latency: keystroke (Win+R) →
+  first frame on screen. That includes hotkey dispatch through explorer,
+  whatever logic explorer uses to decide what to launch, and DWM
+  compositor latency to first present. None of that is measured here.
+  `EVENT_OBJECT_SHOW` itself precedes first paint by ~one frame (~16 ms
+  at 60 Hz).
+- **Different process model.** The new dialog likely isn't spawning
+  rundll32 at all — it may be in-process to explorer, or activated as a
+  packaged app via a different path with very different startup costs.
+- **Steady-state, warm shell.** A 5-iteration warmup leaves shell32,
+  comctl32, the rundll32 image, and kernel page cache hot. Microsoft's
+  number may include cases this harness doesn't see (cold start, low-mem
+  conditions, slow disks).
+- **Uncontrolled environment.** No CPU frequency pin, no process priority
+  bump, no CPU affinity, no AV exclusion. On a thermally throttled or
+  battery-powered laptop these dominate.
+
+The honest framing: *the classic dialog reaches `ShowWindow` in ~48 ms
+from `CreateProcess`, on a warm shell, on this machine.* Still a damning
+data point against 94 ms — but not the same metric.
+
 ## Caveats
 
-- Steady-state, not cold-start. Warmup discards first 5 launches.
+- Steady-state, not cold-start. Use `--warmup 0` immediately after a
+  fresh boot for a cold measurement.
 - This is the *classic* dialog. Measuring the new XAML one needs Insider
   Experimental + the toggle, with the harness pointed at whatever process
   hosts it.
-- `EVENT_OBJECT_SHOW` ≠ first paint. The gap is small but non-zero.
