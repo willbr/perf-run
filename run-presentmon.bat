@@ -11,22 +11,22 @@ if errorlevel 1 (
 
 cd /d "%~dp0"
 
-set "PRESENTMON=C:\Users\wjbr\scoop\apps\presentmon\current\PresentMon.exe"
-
 if not exist perf-run.exe (
     echo perf-run.exe not found in %CD%. Run build.bat first.
     pause
     exit /b 1
 )
 
-if not exist "%PRESENTMON%" (
-    echo PresentMon not found at "%PRESENTMON%".
-    echo Edit run-presentmon.bat to point PRESENTMON at your install.
+where presentmon >nul 2>&1
+if errorlevel 1 (
+    echo PresentMon not found on PATH.
+    echo Install it with: scoop install presentmon
+    echo or download from https://github.com/GameTechDev/PresentMon
     pause
     exit /b 1
 )
 
-perf-run.exe --warmup 5 --n 200 --settle 50 --presentmon "%PRESENTMON%"
+perf-run.exe --warmup 5 --n 200 --settle 50 --presentmon
 
 echo.
 pause
