@@ -48,12 +48,14 @@ so the rewrite has a baseline to be embarrassed by.
 **62 ms p50 first-pixel-on-screen vs Microsoft's quoted 94 ms** for the
 rewrite — now an apples-to-apples comparison (both are time-to-displayed,
 captured via PresentMon's ETW present timeline plus `MsUntilDisplayed`).
-The classic dialog is ~32 ms (~2 composition frames) faster despite being
-the dialog the rewrite was supposed to improve on.
+The classic dialog is ~32 ms faster despite being the dialog the rewrite
+was supposed to improve on.
 
-The 13 ms gap between the two perf-run metrics is one DWM composition
-cycle (16.67 ms at 60 Hz vsync) plus a fraction — the previously-hidden
-compositor + scanout latency that `EVENT_OBJECT_SHOW` alone doesn't see.
+The 13 ms gap between the two perf-run metrics is roughly two composition
+cycles on this machine's 144 Hz display (~6.94 ms each: one cycle for
+DWM to pick up the newly-shown window, one frame of scanout). On a 60 Hz
+display the same gap would compress to ~17–33 ms because each composition
+cycle is longer.
 
 ## What it measures
 
@@ -154,7 +156,12 @@ The 62 ms first-pixel number is a much fairer comparison than the
   presents with their constituent HWNDs. The first DWM present whose QPC
   is at or after `EVENT_OBJECT_SHOW` is the earliest frame that *could*
   include the dialog; in practice it's bounded above by one composition
-  frame from the true value.
+  frame from the true value (~6.94 ms at 144 Hz, ~16.67 ms at 60 Hz).
+- **Refresh rate matters.** This machine runs at 144 Hz, so DWM composes
+  every ~6.94 ms. On a 60 Hz machine the first-pixel number would be
+  meaningfully larger purely because of longer composition + scanout
+  latency, even though the underlying dialog is identical. Microsoft's
+  test environment is unknown.
 
 ## Caveats
 
